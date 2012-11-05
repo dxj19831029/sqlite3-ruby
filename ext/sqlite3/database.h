@@ -7,6 +7,7 @@ struct _sqlite3Ruby {
   sqlite3 *db;
   int busy_timeout;
   int total;
+  int immd; // defines as if we want to return immedicately when busy handler is called.
 };
 
 typedef struct _sqlite3Ruby sqlite3Ruby;
