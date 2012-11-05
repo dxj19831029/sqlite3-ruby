@@ -104,11 +104,13 @@ module SQLite3
     end
 
     def each
+      # mutex lock here
       loop do
         val = step
         break self if done?
         yield val
       end
+      # mutex release here. make sure
     end
 
     # Return an array of the data types for each column in this statement. Note

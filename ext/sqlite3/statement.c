@@ -105,6 +105,18 @@ static VALUE closed_p(VALUE self)
   return Qfalse;
 }
 
+struct Temp {
+	sqlite3_stmt* stmt;
+	int value;
+};
+VALUE rb_try_step(void* in) {
+	struct Temp* a = (struct Temp* )in;
+	a->value = sqlite3_step(a->stmt);
+}
+static VALUE busy_handler(int argc, VALUE *argv, VALUE self)
+{
+	return 0;
+}
 static VALUE step(VALUE self)
 {
   sqlite3StmtRubyPtr ctx;
@@ -132,8 +144,13 @@ static VALUE step(VALUE self)
 #endif
 
   stmt = ctx->st;
-
-  value = sqlite3_step(stmt);
+  
+  { struct Temp a; a.stmt = stmt;
+  rb_thread_blocking_region(rb_try_step, &a, NULL, NULL);
+  value = a.value;
+  }
+  //value = sqlite3_step(stmt);
+  
   length = sqlite3_column_count(stmt);
   list = rb_ary_new2((long)length);
 
