@@ -1,5 +1,8 @@
 #include <sqlite3_ruby.h>
 
+#define TRY_AGAIN_TIMEOUT	10 // ms
+#define TRY_AGAIN_TIMES_LIMIT	5 // 5 times.
+
 #define REQUIRE_OPEN_STMT(_ctxt) \
   if(!_ctxt->st) \
     rb_raise(rb_path2class("SQLite3::Exception"), "cannot use a closed statement");
@@ -108,6 +111,8 @@ static VALUE closed_p(VALUE self)
 struct Block_call {
 	sqlite3_stmt *stmt;
 	int value;
+	sqlite3RubyPtr r_ctx;
+	int again;
 };
 
 static VALUE rb_blocking_step_call(void* inout)
@@ -115,6 +120,27 @@ static VALUE rb_blocking_step_call(void* inout)
 	struct Block_call* call = (struct Block_call*) inout;
 	if (call) {
 		call->value = sqlite3_step(call->stmt);
+		
+		if ( (call->r_ctx->busy_timeout <0 || 
+				call->r_ctx->total < call->r_ctx->busy_timeout) &&
+				(call->value == SQLITE_BUSY || 
+				call->value == SQLITE_LOCKED || 
+				call->value == SQLITE_IOERR_BLOCKED)
+		  )
+		{
+			// only retry when we throw busy but not timeout.
+			if (sqlite3_reset(call->stmt) == SQLITE_OK)
+			{
+				sqlite3_vfs* os_func=NULL;
+				os_func = sqlite3_vfs_find(NULL);
+				if (os_func != NULL)
+				{
+					// try to sleep a little and retry.
+					os_func->xSleep(os_func, (sqlite3_int64)TRY_AGAIN_TIMEOUT);
+				}
+				call->again += 1;
+			}
+		}
 	}
 	return Qnil;
 }
@@ -154,13 +180,26 @@ static VALUE step(VALUE self)
 	  sqlite3RubyPtr r_ctx = NULL;
 	  if (db != Qnil)
 		Data_Get_Struct(db, sqlite3Ruby, r_ctx);
-	  if (r_ctx != NULL)
-		  r_ctx->is_busy_imm = 0;
+		
 	  try_again.stmt = stmt;
-	  rb_thread_blocking_region(rb_blocking_step_call, (void*)(&try_again), NULL, NULL);
-	  value = try_again.value;
-	  if (r_ctx != NULL)
-		  r_ctx->is_busy_imm = 1;
+	  try_again.r_ctx = r_ctx;
+	  try_again.again = 0;
+		
+	  do {
+		if (r_ctx != NULL)
+			r_ctx->is_busy_imm = 0;
+		
+		rb_thread_blocking_region(rb_blocking_step_call, (void*)(&try_again), NULL, NULL);
+		value = try_again.value;
+		if (try_again.again > 0 && try_again.again <= TRY_AGAIN_TIMES_LIMIT)
+		{
+			continue;
+		}
+		if (r_ctx != NULL)
+			r_ctx->is_busy_imm = 1;
+		
+		break;
+	  } while (1);
   }
   length = sqlite3_column_count(stmt);
   list = rb_ary_new2((long)length);
