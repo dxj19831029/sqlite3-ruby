@@ -4,7 +4,7 @@ require 'sqlite3/pragmas'
 require 'sqlite3/statement'
 require 'sqlite3/translator'
 require 'sqlite3/value'
-
+require 'monitor'
 module SQLite3
 
   # The Database class encapsulates a single connection to a SQLite3 database.
@@ -49,6 +49,7 @@ module SQLite3
       end
 
     end
+    @@mutex = Monitor.new
 
     # A boolean that indicates whether rows in result sets should be returned
     # as hashes or not. By default, rows are returned as arrays.
@@ -481,6 +482,7 @@ Support for this will be removed in version 2.0.0.
     # transaction explicitly, either by calling #commit, or by calling
     # #rollback.
     def transaction( mode = :deferred )
+      @@mutex.mon_enter
       execute "begin #{mode.to_s} transaction"
 
       if block_given?
@@ -504,6 +506,7 @@ Support for this will be removed in version 2.0.0.
     # <tt>abort? and rollback or commit</tt>.
     def commit
       execute "commit transaction"
+      @@mutex.mon_exit
       true
     end
 
@@ -513,6 +516,7 @@ Support for this will be removed in version 2.0.0.
     # <tt>abort? and rollback or commit</tt>.
     def rollback
       execute "rollback transaction"
+      @@mutex.mon_exit
       true
     end
 
